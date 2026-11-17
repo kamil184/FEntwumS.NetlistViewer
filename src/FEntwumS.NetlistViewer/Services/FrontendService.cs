@@ -537,6 +537,30 @@ public class FrontendService : IFrontendService
 		await ShowViewerAsync(new ProjectFile(synthFilePath, root));
 	}
 
+	// Synthesizes the design itself, because OneWare's synthesis for GateMate removes what WumSys needs
+	public async Task ShowRestoredPostSynthesisNetlistAsync(UniversalFpgaProjectRoot root)
+	{
+		IProjectFile topFile = new ProjectFile(Path.Combine(root.FullPath, root.TopEntityFilePath!), root);
+
+		// Next to the Verilog GHDL writes for VHDL, so that the viewer finds the VHDL source of every cell
+		string outputPath = Path.Combine(FentwumSNetlistViewerSettingsHelper.GetBuildDirectory(topFile), $"{root.TopEntity}.json");
+
+		ApplicationProcess proc = _applicationStateService.AddState("Synthesizing with hierarchy", AppState.Loading);
+
+		bool success = (topFile.Extension != ".vhd" || await _netlistGenerator.GenerateVhdlNetlistAsync(topFile, root.TopEntity!))
+		               && await ServiceManager.GetService<IYosysService>().SynthesizeWithHierarchyAsync(root, outputPath);
+
+		if (!success)
+		{
+			_applicationStateService.RemoveState(proc, "Error: The hierarchy could not be restored");
+			return;
+		}
+
+		_applicationStateService.RemoveState(proc);
+
+		await ShowViewerAsync(new ProjectFile(outputPath, root));
+	}
+
 	public async Task ShowViewerAsync(IProjectFile? json)
 	{
 		if (json is null)

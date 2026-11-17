@@ -108,6 +108,7 @@ the interface of the module (it does not need to implement the behavior).
 
 If you have synthesized your design, you can view the synthesized netlist by right-clicking the file containing the
 toplevel entity and selecting the `Vie Post-Synthesis Netlist for ...` option.
+Once the path to the WumSys yosys plugin is set, the option `View Post-Synthesis Netlist with Restored Hierarchy for ...` synthesizes the design itself and shows the cells inside the module instances they came from.
 
 ### Available settings
 

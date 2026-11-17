@@ -569,6 +569,7 @@ public class FEntwumSNetlistReaderFrontendModule : OneWareModuleBase
 	};
 
 	private static bool EnableHierarchyView = false;
+	private static string WumSysPluginPath = string.Empty;
 
 	public override void RegisterServices(IServiceCollection containerRegistry)
 	{
@@ -622,6 +623,8 @@ public class FEntwumSNetlistReaderFrontendModule : OneWareModuleBase
 
 		settingsService.GetSettingObservable<bool>(FentwumSNetlistViewerSettingsHelper.EnableHierarchyViewKey)
 			.Subscribe(x => EnableHierarchyView = x);
+		settingsService.GetSettingObservable<string>(FentwumSNetlistViewerSettingsHelper.WumSysPluginPathKey)
+			.Subscribe(x => WumSysPluginPath = x);
 
 		// Upgrade settings, if necessary
 		if (SettingsUpgrader.NeedsUpgrade())
@@ -745,6 +748,16 @@ public class FEntwumSNetlistReaderFrontendModule : OneWareModuleBase
 					Command = new AsyncRelayCommand(() =>
 						ServiceManager.GetService<IFrontendService>().ShowPostSynthesisNetlistAsync(projectRoot))
 				});
+
+				if (File.Exists(WumSysPluginPath))
+				{
+					menuItems.Add(new MenuItemModel("NetlistViewer_ViewPostSynthRestored")
+					{
+						Header = $"View Post-Synthesis Netlist with Restored Hierarchy for {projectFile.Header}",
+						Command = new AsyncRelayCommand(() =>
+							ServiceManager.GetService<IFrontendService>().ShowRestoredPostSynthesisNetlistAsync(projectRoot))
+					});
+				}
 			}
 			
 			if (selected is [UniversalFpgaProjectRoot fpgaRoot])
@@ -921,6 +934,9 @@ public class FEntwumSNetlistReaderFrontendModule : OneWareModuleBase
 			FentwumSNetlistViewerSettingsHelper.ShowUnconnectedPortsKey, new CheckBoxSetting("Show unconnected ports", false));
 		ServiceManager.GetService<ISettingsService>().RegisterSetting("Netlist Viewer", "Experimental",
 			FentwumSNetlistViewerSettingsHelper.OnlyShowUserGeneratedSignalNamesKey, new CheckBoxSetting("Only show user generated signals", false));
+		ServiceManager.GetService<ISettingsService>().RegisterSetting("Netlist Viewer", "Experimental",
+			FentwumSNetlistViewerSettingsHelper.WumSysPluginPathKey,
+			new FilePathSetting("Path to WumSys yosys plugin", "", "", "", x => x == "" || File.Exists(x)));
 		
 		// These settings are not displayed to the user; They store internal extension state
 		ServiceManager.GetService<ISettingsService>().Register(FentwumSNetlistViewerSettingsHelper.FentwumsSettingVersionKey, -1);

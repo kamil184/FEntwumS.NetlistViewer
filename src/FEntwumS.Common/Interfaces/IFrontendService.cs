@@ -27,4 +27,6 @@ public interface IFrontendService : ISettingsSubscriber
 	public Task CreateSystemVerilogHierarchyAsync(IProjectFile systemVerilogFile);
 	
 	public Task ShowPostSynthesisNetlistAsync(UniversalFpgaProjectRoot root);
+
+	public Task ShowRestoredPostSynthesisNetlistAsync(UniversalFpgaProjectRoot root);
 }

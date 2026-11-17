@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using OneWare.Essentials.Models;
 using OneWare.Essentials.Services;
 using OneWare.UniversalFpgaProjectSystem.Models;
+using OneWare.UniversalFpgaProjectSystem.Parser;
+using OneWare.UniversalFpgaProjectSystem.Services;
 
 namespace FEntwumS.NetlistViewer.Services;
 
@@ -18,6 +20,7 @@ public class YosysService : IYosysService
 	private bool _useHierarchicalBackend;
 
 	private string _yosysPath = string.Empty;
+	private string _wumSysPluginPath = string.Empty;
 
 	public YosysService()
 	{
@@ -33,6 +36,8 @@ public class YosysService : IYosysService
 			.Subscribe(x => _yosysPath = Path.Combine(x, "bin", "yosys"));
 		_settingsService.GetSettingObservable<bool>(FentwumSNetlistViewerSettingsHelper.UseHierarchicalBackendKey)
 			.Subscribe(x => _useHierarchicalBackend = x);
+		_settingsService.GetSettingObservable<string>(FentwumSNetlistViewerSettingsHelper.WumSysPluginPathKey)
+			.Subscribe(x => _wumSysPluginPath = x);
 	}
 
 	public Task<bool> LoadVhdlAsync(IProjectFile file, string topEntityName)
@@ -131,6 +136,81 @@ public class YosysService : IYosysService
 					$"{(systemVerilogFileList.Count > 0 ? "\"" + string.Join("\" \"", systemVerilogFileList) + "\"" : "")}"),
 				("{blackBoxLoadingCommand}", $"{_fpgaBbService.getBbCommand(file)}"),
 				("{topEntityName}", $"{topEntityName}"))
+			.Build();
+
+		(bool success, _) =
+			await ServiceManager.GetService<IToolExecutionDispatcherService>().ExecuteAsync(yosysCommand);
+
+		return success && noErrors;
+	}
+
+	// Synthesizes the design with the yosys command of the project's board, as OneWare does, and runs WumSys.
+	// synth_gatemate stops before its last step, opt_clean -purge, which removes the $scopeinfo cells WumSys needs.
+	public async Task<bool> SynthesizeWithHierarchyAsync(UniversalFpgaProjectRoot root, string outputPath)
+	{
+		// The project's device settings, completed by the board's defaults
+		Dictionary<string, string> settings = FpgaSettingsParser.LoadSettings(root, root.Board ?? "");
+		var fpga = ServiceManager.GetService<FpgaService>().FpgaPackages.FirstOrDefault(x => x.Name == root.Board)?.LoadFpga();
+
+		foreach (var (key, value) in fpga?.Properties ?? new Dictionary<string, string>())
+		{
+			settings.TryAdd(key, value);
+		}
+
+		string synthTool = settings.GetValueOrDefault("yosysToolchainYosysSynthTool") ?? "";
+		string command = settings.GetValueOrDefault("yosysToolchainCommand") ?? "";
+
+		if (string.IsNullOrWhiteSpace(command))
+		{
+			command = "$SYNTH_TOOL -top $TOP; write_json $OUTPUT";
+		}
+
+		if (synthTool == "synth_gatemate")
+		{
+			synthTool += " -run :vlog";
+		}
+
+		// As for the RTL view: the Verilog GHDL wrote for VHDL, or else the project's Verilog files
+		string workingDirectory = Path.GetDirectoryName(outputPath)!;
+		string ccVerilogFilePath = Path.Combine(workingDirectory, $"{root.TopEntity}.v");
+		List<string> files = File.Exists(ccVerilogFilePath)
+			? [ccVerilogFilePath]
+			: root.GetFiles("*.v").Concat(root.GetFiles("*.sv"))
+				.Where(x => !root.IsCompileExcluded(x) && !root.IsTestBench(x))
+				.Select(x => Path.Combine(root.TopFolder.FullPath, x)).ToList();
+
+		Directory.CreateDirectory(workingDirectory);
+
+		bool noErrors = true;
+
+		var yosysCommand = ServiceManager.GetService<IToolExecutionDispatcherService>()
+			.CreateToolCommandBuilder("yosys")
+			.WithStatus("Synthesizing with hierarchy")
+			.WithTimer(true)
+			.WithWorkingDirectory(workingDirectory)
+			.WithOutputHandler(x =>
+			{
+				_logger.Log(x);
+				return true;
+			})
+			.WithErrorHandler(x =>
+			{
+				if (x.Contains("ERROR:") || x.Contains("error:"))
+				{
+					noErrors = false;
+				}
+
+				_logger.Error(x);
+				return true;
+			})
+			.Add("-m")
+			.Add(_wumSysPluginPath)
+			.Add("-p")
+			.AddScript($"read_verilog -sv {{files}}; {command}; wumsys; write_json -compat-int \"{outputPath}\"",
+				("{files}", "\"" + string.Join("\" \"", files) + "\""),
+				("$SYNTH_TOOL", synthTool),
+				("$TOP", root.TopEntity!),
+				("$OUTPUT", $"\"{outputPath}\""))
 			.Build();
 
 		(bool success, _) =
